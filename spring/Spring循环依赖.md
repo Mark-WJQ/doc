@@ -113,3 +113,107 @@
     }
 
     ```
+
+    ```plantuml
+    @startuml
+        title: doCreateBean
+        start
+        :对象实例化;
+        partition 创建三级缓存{
+        :singletonFactories.put(FactoryBean);
+        :三级缓存中的FactoryBean 主要是为对象创建代理;
+        }
+        partition populated{
+        :属性填充;
+        :依赖注入，递归调用getBean;
+        note
+        InstantiationAwareBeanPostProcessor.postProcessPropertyValues 子类实现IOC注入
+        CommonAnnotationBeanPostProcessor.postProcessPropertyValues 执行注入@Resource
+        AutowiredAnnotationBeanPostProcessor.postProcessPropertyValues  注入注解 @Autowired，@Value
+        在依赖注入的过程中会获取依赖对象，如果发生循环依赖，
+        那么在获取依赖对象时，会从singletonFactories中获取，此时会执行FactoryBean，
+        如果依赖对象存在代理，则会在FactoryBean中执行代理过程，部分BeanPostProcessorsAfterInitialization提前执行
+        end note
+        }
+        partition 对象初始化{
+        :执行aware;
+        note
+        BeanNameAware,BeanClassLoaderAware,BeanFactoryAware
+        其他Aware执行：ApplicationContextAwareProcessor
+        end note
+        :applyBeanPostProcessorsBeforeInitialization;
+        :invokeInitMethods:postConstrouct或afterPropertiesSet;
+        :applyBeanPostProcessorsAfterInitialization: 其中包含代理对象的创建;
+        note
+        所有代理相关的创建类都继承自此
+        AbstractAutoProxyCreator.earlyProxyReferences
+        中维护了先前已经创建的代理对象
+        end note
+        }
+
+        if (循环依赖且产生代理对象) then (yes)
+        :返回代理对象;
+        else 
+        :返回创建好的对象;
+        endif
+        end
+        @enduml
+    
+    ```
+
+    ```plantuml
+    @startuml
+        title:getBean
+        partition 获取缓存bean{
+            :singletonObjects.get(beanName);
+            if (一级缓存存在) then (yes)
+            :返回实例对象;
+            elseif (实例正在创建中) then (yes)
+            :earlySingletonObjects.get(beanName);
+            if(二级缓存存在) is (yes) then
+            :返回实例对象;
+            elseif(allowEarlyReference) then(yes)
+            :三级缓存singletonFactory = singletonFactories.get(beanName);
+            if (singletonFactory ！= null) is (yes) then
+            :singletonFactory.getObject;
+            :earlySingletonObjects.put;
+            :singletonFactories.remove;
+            else (no)
+            :null;
+            endif
+            else
+            :null;
+            endif
+            else
+            :null;
+            endif
+        }
+        if (缓存bean存在) then (yes)
+
+        else
+        partition 创建实例{
+        :获取bean definition;
+        :getDependsOn;
+        if (单例模式?) is (yes) then
+        partition 单例创建过程{
+            :标记创建中singletonsCurrentlyInCreation.add(beanName);
+            :createBean();
+            :清除创建中标记singletonsCurrentlyInCreation.remove(beanName);
+            :singletonObjects.put(beanName, singletonObject)
+            singletonFactories.remove(beanName)
+            earlySingletonObjects.remove(beanName)
+            registeredSingletons.add(beanName);
+        }
+        else (no)
+        partition 原型模式创建{
+        :创建前处理：在线程上下文中标记创建中;
+        :createBean();
+        :创建后处理：清除创建标记;
+        }
+        endif
+        }
+        endif
+        :响应实例;
+        end
+        @enduml
+    ```
