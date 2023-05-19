@@ -1,0 +1,43 @@
+1. 核心概念
+    1. channel
+        * channelpiplen
+          + channelInBoundHandler
+          + channelOutBoundHandler
+          + ByteBuf
+   2. netty 自带handler
+    * 拆包器
+      * FixedLengthFrameDecoder
+      * LengthFieldBasedFrameDecoder
+      * DelimiterBasedFrameDecoder、
+      * LineBasedFrameDecoder
+    * 协议栈
+      * http(2)
+      * dns
+      * ssl
+      * redis
+      * mqtt
+      * stomp
+      * 工具
+    * 编解码
+      * base64
+      * marshalling
+      * xml
+      * string
+      * protobuf
+      * json
+      * compress
+    * 工具
+      * idleHandler
+      * traffic
+      * logging
+      * Ip rule
+      * DynamicAddress
+2. 高性能
+   1. 线程模型
+   2. FastThreadLocal
+   3. 内存
+      * UnpooledHeadBytebuf
+      * unpooledDirectBytebuf
+      * pooledHeadBytebuf
+      * pooledDirectBytebuf
+   4. recycler
