@@ -1,0 +1,27 @@
+@startuml
+'https://plantuml.com/component-diagram
+
+
+[select线程池] as select
+[工作线程池] as worker
+
+queue "延时队列" as q{
+       [数据库队列]
+      [内存延时队列]
+}
+
+[事件生产者] as pro
+
+
+pro --> q : 插入事件
+select -right-> q : 监听事件，take
+select --> worker : 提交事件给工作线程池执行，submit
+note left of pro
+不同来源，
+1. 定时任务生产
+2. 服务直接调用
+3. 消息消费产生
+end note
+
+
+@enduml
