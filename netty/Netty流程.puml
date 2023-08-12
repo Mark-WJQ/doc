@@ -1,0 +1,130 @@
+@startuml
+title 服务端启动
+'https://plantuml.com/component-diagram'
+boundary ServerBootstrap  as sb
+boundary NioEventLoop as nel
+entity NioServerSocketChannel as nssc
+entity NioMessageUnsafe as nms
+control ChannelPipeline as cp
+control ChannelHandlerContext as chc
+entity ChannelHandler as handler
+
+group initAndRegister
+    group init
+        sb -> nssc: 创建java.ServerSocketChannel，并封装至netty.channel
+        nssc -> nssc : 构造方法中创建pipeline、unsafe
+        nssc --> sb
+        sb -> sb : init：主要是配置及属性填充
+        sb -> cp : addLast，添加一个 ChannelInitializer,其中包含配置的handler，以及 ServerBootstrapAcceptor
+    end
+    group register
+        sb -> nel : registor,将初始化的channel注册到EventLoop
+        nel -> nms : channel().unsafe().register, 绑定channel与eventLoop
+        nms --> nel : 提交register任务到线程池异步执行
+        group doRegistre
+            nms -> nms : doRegistre:将java.channel 注册到selector，不对任何事件感兴趣
+            nms -> nms : 标识已注册
+            nms -> cp : invokeHandlerAddedIfNeeded,激活handler，执行Initialier
+            cp -> chc : callHandlerAdded,设置handler状态为已添加,激活handler
+            chc -> handler : handlerAdded
+            opt handler is ChannelInitializer
+                handler -> handler : initChannel,执行完成后将Initializer移除出链表
+                note left
+                    如果是NioServerScoketChannel，添加 ServerBootstrapAcceptor 会是一个task提交到当前线程池稍后执行
+                end note
+                handler --> nel : pipeline.addLast(new ServerBootstrapAcceptor()),提交匿名任务，当前eventloop正在执行registor，入队等待执行
+            end
+            nms -> cp : fireChannelRegistered
+        end
+    end
+
+    group doBind0
+        sb --> nel : 提交bind事件异步执行,主要操作是java.channel 绑定地址
+        group 执行bind
+            nssc -> cp : bind
+            cp -> chc : bind
+            chc -> chc : 从tail开始执行，在head中调用unsafe
+            chc -> nms : bind
+            nms ->  nssc: java.channel 绑定address
+        end
+        nms --> nel : 提交 fireChannelActive 异步执行
+        group 执行fireChannelActive
+            cp -> chc : invokeChannelActive,从head开始执行
+            chc ->chc : fireChannelActive
+            chc -> chc : head.readIfIsAutoRead
+            chc -> nssc: read
+            nssc -> cp : read
+            cp -> chc:read,从tail开始执行
+            chc -> nms:beginRead,在HeadContext中
+            nms -> nssc : doBeginRead 注册OP_ACCEPT 事件到selectionKey
+        end
+    end
+end
+
+newpage 服务端处理客户端连接
+entity NioSocketChannel as nsc
+
+nel -> nel : run,执行select，监听OP_ACCEPT
+nel -> nssc : ch.unsafe().read() 处理连接事件
+nssc -> nssc : doReadMessages,构建NioSocketChannel,类似于创建ServerSocketChannel过程
+nssc -> cp : fireChannelRead
+cp -> chc: invokeChannelRead
+chc -> handler : channelRead
+handler -> handler : ServerBootstrapAcceptor,注册NioSocketChannel,\n参考serverChannel的注册流程
+note left
+1. 感兴趣的事件是OP_READ
+2. 在注册方法中直接调用active
+end note
+
+
+@enduml
+
+@startuml
+title NioEventLoop 执行过程
+start
+:NioEventLoop初始化;
+:调用者提交task,任务入队;
+note
+nio.netty.util.concurrent.SingleThreadEventExecutor#execute(java.lang.Runnable)
+end note
+if (线程已启动?) is (yes) then
+  :cas设置线程启动状态;
+  :创建并启动线程;
+  :将loop中的线程变量赋值为新启动线程;
+  :执行SingleThreadEventExecutor.this.run()方法;
+  note
+    run方法在NioEventLoop中覆写,while-true执行
+  end note
+endif
+:notify线程执行;
+:run方法执行;
+while (true)
+  :计算selector策略;
+  note
+  1. 查看当前线程队列中是否有任务
+  2. 没有的话返回策略SELECT=-1
+  3. 否则返回 selector.selectNow()
+  end note
+  if (策略为SELECT?) is (yes) then
+    if (调度队列中有任务?) is (yes) then
+      :selector.select(timeout);
+    else (no)
+      :selector.select();
+    endif
+  endif
+  if (IO计数>0?) is (yes) then
+    :处理IO事件;
+  endif
+   note
+    1. IO计数是select策略的数字或select
+    2. 处理read、write、accept、connect
+   end note
+  :运行队列中任务;
+  note
+  1. 将调度队列中到期任务提取到线程队列中
+  2. 执行线程队列中任务
+  3. 执行tailQueue中的任务
+  end note
+endwhile
+stop
+@enduml
