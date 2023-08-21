@@ -35,6 +35,8 @@
       * logging
       * Ip rule
       * DynamicAddress
+      * HashedWheelTimer 定时任务：时间轮
+      * Mpsc.newMpscQueue 多生产者单消费者队列
 2. 高性能
    1. 线程模型
       * NioEventLoopGroup

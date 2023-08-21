@@ -83,6 +83,9 @@ end note
 title NioEventLoop 执行过程
 start
 :NioEventLoop初始化;
+note
+selector在构造方法中初始化
+end note
 :调用者提交task,任务入队;
 note
 nio.netty.util.concurrent.SingleThreadEventExecutor#execute(java.lang.Runnable)
@@ -128,3 +131,104 @@ while (true)
 endwhile
 stop
 @enduml
+
+
+@startuml
+title channel write
+
+entity NioSocketChannel as nssc
+control ChannelPipeline as cp
+control ChannelHandlerContext as chc
+entity ChannelHandler as handler
+entity javaSocketChannel as javaCh
+entity AbstractUnsafe as unsafe
+entity ChannelOutboundBuffer as ob
+boundary NioEventLoop as nel
+note right of ob
+写信息主要是围绕buffer来进行的，buffer中维护了两个队列：unflushedEntry、flushedEntry
+写分三步
+    1. write 将ByteBuf对象添加到unflushedEntry
+    2. flush 将unflushedEntry中的对象转移到flushedEntry
+    3. 调用java.SocketChannel 发送信息
+end note
+
+
+nssc -> cp : writeAndFlush
+cp -> chc : writeAndFlush
+chc -> chc : invokeWriteAndFlush
+chc -> chc : invokeWrite0
+chc -> handler : HeadContext.write
+handler -> unsafe : write
+unsafe -> nssc : filterOutboundMessage
+nssc --> unsafe : 只返回ByteBu/FileRegionf对象，如果不是direct，包装成
+unsafe -> ob: addMessage
+note right
+1. 添加到unflushed队尾，大小为 size只是暂存，
+2. 计算当前buffer中totalPendingSize+=size
+3. totalPendingSize > WriteBufferHighWaterMark(buffer写入高水位)，如果条件满足该buffer将不可写入，维护unwritable
+end note
+chc -> chc : invokeFlush0
+chc -> handler : HeadContext.flush
+handler -> unsafe :flush
+unsafe -> ob:addFlush
+note right
+1. 将unflushed队列中的元素转移到flushed队列中，并且将unflushed=null
+2. 转移过程中如果有的节点取消
+    1. 减去取消节点的size， totalPendingSize-=size
+    2. totalPendingSize < WriteBufferLowWaterMark 小于低水位，buffer可写入，维护unwritable
+end note
+unsafe -> unsafe: flush0
+note left
+inFlush0 维护状态，避免重复进入
+end note
+unsafe -> nssc : doWrite
+
+loop  循环发送buffer中的信息，条件：writeSpinCount > 0
+note left
+ 方法里有自旋次数writeSpinCount
+ 主要是控制每次写不要占用I/O线程太多时间
+end note
+alt buffer为空
+nssc -> nssc :clearOpWrite,清除OP_WRITE
+return 结束方法
+end
+nssc -> ob : nioBuffers(int maxCount, long maxBytes)
+ob --> nssc: 将buffer中的部分Bytebuf转换成java.ByteBuffer，限制条件是两个max
+nssc -> ob : nioBufferCount
+ob --> nssc : 有多少个byteBuffer可以传输，与nioBuffers对应，代表从buffer中读取了多少个ByteBuffer
+nssc -> javaCh : write
+javaCh --> nssc : 响应实际发送的字节,localWrittenBytes
+alt localWrittenBytes<=0，走到这里说明有数据需要发送，但是实际没有发送
+ nssc -> nssc :incompleteWrite ,设置OP_WRITE
+ return  结束方法调用
+end
+nssc -> nssc:adjustMaxBytesPerGatheringWrite,调整每次发送的字节数，主要根据操作系统的能力调节
+nssc -> ob : removeBytes，释放已发送字节
+note right
+ 0. flushed 指向下个节点
+ 1.减去已发送节点的size， totalPendingSize-=size
+ 2. totalPendingSize < WriteBufferLowWaterMark 小于低水位，buffer可写入，维护unwritable
+end note
+nssc -> nssc : --writeSpinCount，自旋次数减少
+end loop
+nssc -> nssc :incompleteWrite,writeSpinCount <0,设置OP_WRITE
+
+nel -> selector : select
+selector --> nel : 监听到OP_WRITE
+nel -> unsafe:forceFlush
+unsafe -> unsafe:flush0,看上面的flush流程就行
+
+
+
+
+
+
+
+
+
+
+
+
+
+@enduml
+
