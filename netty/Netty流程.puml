@@ -90,7 +90,7 @@ end note
 note
 nio.netty.util.concurrent.SingleThreadEventExecutor#execute(java.lang.Runnable)
 end note
-if (线程已启动?) is (yes) then
+if (线程已启动?) is (no) then
   :cas设置线程启动状态;
   :创建并启动线程;
   :将loop中的线程变量赋值为新启动线程;
@@ -134,12 +134,83 @@ stop
 
 
 @startuml
+title channel read
+
+boundary NioEventLoop as nel
+boundary Selector
+entity NioByteUnsafe as unsafe
+entity NioSocketChannel as nssc
+entity RecvByteBufAllocator.Handle as allocHandle
+control ChannelPipeline as cp
+control ChannelHandlerContext as chc
+entity ChannelInboundHandler as handler
+entity javaSocketChannel as javaCh
+
+
+nel -> Selector:selectedKeys
+group processSelectedKey
+Selector --> nel : 响应准备好的key
+nel -> nssc:unsafe
+nssc --> nel : 响应chann绑定的unsafe
+nel -> unsafe:read
+end group
+unsafe --> unsafe:recvBufAllocHandle,创建接收处理器allocHandle
+loop allocHandle.continueReading()
+unsafe -> allocHandle:allocate
+allocHandle --> unsafe:创建接收数据的ByteBuf
+unsafe -> nssc : doReadBytes,入参是接收数据的ByteBuf
+nssc -> javaCh : read
+javaCh --> nssc: 将读取到的字节信息写入到指定的ByteBuf中
+alt 本次读取的字节数 <=0
+unsafe -> unsafe:释放接收数据的ByteBuf
+    alt 本次读取的字节数 < 0
+        unsafe -> unsafe: 表示对方发送的close事件，设置 close=true
+    end
+end
+unsafe -> cp : fireChannelRead
+cp -> chc : invokeChannelRead
+chc -> handler :(head~tail).channelRead
+note right
+读取字节信息后在handler中进行转码，主要是协议解析、反序列化、拆包、粘包等
+end note
+handler -> handler : ByteToMessageDecoder.decode
+note over handler
+ByteToMessageDecoder 子类基于它可以很方便的实现拆包与粘包的操作，每个channel都单独绑定一个实例，带状态的Cumulator
+使用Cumulator(累加器)，将每次读取进来的bytebuf进行合并，合并完后尝试decode，如果可以解析出所需的对象则调用下一个channelHandler进行业务处理，否则不做任何操作
+decode操作根据协议读取指定的大小的字节数、或者读完以后直接反序列化成对象等
+end note
+
+
+end loop
+unsafe -> cp : fireChannelReadComplete
+note right
+驱动hanndler处理ChannelReadComplete
+end note
+
+alt close == true
+    group closeOnRead
+        alt 允许半关
+             unsafe -> nssc : shutdownInput
+             nssc -> javaCh : shutdownInput
+             unsafe -> cp:fireUserEventTriggered(ChannelInputShutdownEvent.INSTANCE)
+        else 否则
+            unsafe -> nssc : close
+        end
+    end
+end
+
+
+@enduml
+
+
+
+@startuml
 title channel write
 
 entity NioSocketChannel as nssc
 control ChannelPipeline as cp
 control ChannelHandlerContext as chc
-entity ChannelHandler as handler
+entity ChannelOutboundHandler as handler
 entity javaSocketChannel as javaCh
 entity AbstractUnsafe as unsafe
 entity ChannelOutboundBuffer as ob
@@ -157,8 +228,15 @@ nssc -> cp : writeAndFlush
 cp -> chc : writeAndFlush
 chc -> chc : invokeWriteAndFlush
 chc -> chc : invokeWrite0
-chc -> handler : HeadContext.write
+chc -> handler : (tail~head).write
+note right
+在handler中对发送的消息进行处理，主要将对象进行序列化、协议补充等
+eg:MessageToByteEncoder
+end note
 handler -> unsafe : write
+note over handler
+在HeadContext中调用unsafe
+end note
 unsafe -> nssc : filterOutboundMessage
 nssc --> unsafe : 只返回ByteBu/FileRegionf对象，如果不是direct，包装成
 unsafe -> ob: addMessage
@@ -168,8 +246,11 @@ note right
 3. totalPendingSize > WriteBufferHighWaterMark(buffer写入高水位)，如果条件满足该buffer将不可写入，维护unwritable
 end note
 chc -> chc : invokeFlush0
-chc -> handler : HeadContext.flush
+chc -> handler : (tail~head).flush
 handler -> unsafe :flush
+note over handler
+在HeadContext中调用unsafe
+end note
 unsafe -> ob:addFlush
 note right
 1. 将unflushed队列中的元素转移到flushed队列中，并且将unflushed=null
@@ -217,18 +298,10 @@ nel -> selector : select
 selector --> nel : 监听到OP_WRITE
 nel -> unsafe:forceFlush
 unsafe -> unsafe:flush0,看上面的flush流程就行
-
-
-
-
-
-
-
-
-
-
-
-
-
 @enduml
+
+
+
+
+
 

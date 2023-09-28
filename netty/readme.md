@@ -10,6 +10,9 @@
       * LengthFieldBasedFrameDecoder
       * DelimiterBasedFrameDecoder、
       * LineBasedFrameDecoder
+      * 自定解码器
+        * Header：魔数、版本、协议、序列化算法、报文类型、状态、保留字段、报文长度
+        * body：报文内容
       * TCP发送数据是一段一段发送的，在数据传输中会存在粘包（多个请求在一段数据中发送）跟分包（一个请求分成多多段），并且在TCP是流式数据传输，没有办法直接分辨出数据是否终止，那netty在消费数据时是如何做的
         * ByteToMessageDecoder 维护了 Cumulator ，Channel 不断读入数据，Cumulator 将读进来的数据进行合并，合并一次触发一次解码，解码后移除已读数据
         * io.netty.channel.nio.AbstractNioByteChannel.NioByteUnsafe#read
@@ -93,10 +96,16 @@
         ```
    2. FastThreadLocal
    3. 内存
+      * [内存分配算法](https://juejin.cn/post/7051200855415980069)
+        * 主要从两个方面解决问题，1. 分配效率，池化，缓存 2. 碎片程度，内部碎片、外部碎片
+        * chunk、run（整数倍page）、page(默认8k)、subpage(16b-28K)
       * UnpooledHeadBytebuf
       * unpooledDirectBytebuf
       * pooledHeadBytebuf
       * pooledDirectBytebuf
+      * ResourceLeakDetector-SimpleLeakAwareByteBuf|AdvancedLeakAwareByteBuf
+        * 内存泄漏检测，主要是利用WeakReference对象回收时，将引用放入ReferenceQueue中，通过检测queue发现内存是否泄露
+        * 主要是针对Bytebuf，正常调用release方法后，内存检测对象会销毁，否则就会检测到
    4. 零拷贝
       * DirectBytebuf 直接内存
       * CompositeBytebuf 组合多个Bytebuf
@@ -106,7 +115,7 @@
    4. Recycler
       * ThreadLocal 存储回收的对象
       * LocalPool 存储数据结构
-        * DefaultHandle 实际存储被回收对象
+        * DefaultHandle 实际存储被回收对象，绑定了线程
         * batch：ArrayDeque<DefaultHandle<T>>  存储本线程回收的对象，初始化的handle
         * pooledHandles：MessagePassingQueue<DefaultHandle<T>> 存储其他线程回收的对象，这个queue支持多生产者单消费者，无锁设计
         * 当本线程获取对象时如果从batch中获取不到，则从pooledHandles 拉取一定数量的对象到batch中，否则新建Handle
