@@ -113,7 +113,7 @@
 		1. 等锁
 			1. MDL（metadata locks），表结构锁，执行DDL，DML 是需要先获取MDL，DDL 获取读锁，DML 写锁
 			2. 表锁
-			3. 行锁
+			3. 行锁，读的时候加 lock in shared mode；
 		2. 数据落盘被阻塞
 			1. FLUSH TABLES  会锁表,flush关闭表如果flush 语句被阻塞的话，flush本身操作很快
 			2. FLUSH TABLES WITH READ LOCK  可读不可改
