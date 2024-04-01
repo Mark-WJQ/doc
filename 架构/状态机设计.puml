@@ -1,0 +1,126 @@
+@startuml
+interface State<T> {
+}
+ interface Event<T> {
+}
+
+interface TransactionAction extends Consumer{
+    accept(T t):void
+    andThen(after: Consumer<? super T>):TransactionAction<T>
+}
+
+note top of TransactionAction
+ "事务性操作,数据库的相关操作需要在一个事务中操作,
+ 执行的时候会优先执行非事务action，最后执行事务action"
+end note
+note left of TransactionAction::accept
+事务性方法
+end note
+
+note "状态转移类，主要配置及操作都是通过该类来进行的" as tn
+tn.left>Transitions
+ interface Transitions<T> {
+  + match(ctx: StateContext): boolean
+  + getGuard(): Predicate
+  + src(): State<T>
+  + target(): State<T>
+  + transitions(ctx: StateContext): void
+  + action(): Consumer
+  + getEvent(): Event
+}
+
+note "存放上下文中的需要传递的信息，eg:任务信息等" as mhn
+mhn .right> MessageHeaders
+class MessageHeaders extends Map{
+}
+
+class Message<T>{
+    - event:Event<T>
+    + getHeaders():MessageHeaders
+}
+
+
+ interface StateContext<T> {
+  + getEvent(): Event<T>
+  + getState(): State<T>
+  + getMessageHeader(key:Object)
+  + getMessageHeaders():MessageHeaders
+}
+
+
+interface TransitionsCollection{
+     + matchTransitions(ctx: StateContext) : Transitions
+}
+
+
+interface StateMachine{
+   -transitionsCollection:TransitionsCollection
+   void sendEvent(ctx: StateContext);
+}
+
+
+class StateMachineBuilder{
+     - tc:List<TransitionsConfigurater>
+     machineId():String
+     transitionsConfigurater():TransitionsConfigurater
+     build():StateMachine;
+}
+
+class TransitionsConfigurater{
+           event(event:Event):TransitionsConfigurater
+           src(sta:State):TransitionsConfigurater
+           target(sta:State):TransitionsConfigurater
+           action(act:Consumer):TransitionsConfigurater
+           transactionAction(act:TransactionAction):TransitionsConfigurater
+           guard(guard:Predicate):TransitionsConfigurater
+           matchs(matcher:Predicate):TransitionsConfigurater
+           build():Transitions
+}
+
+class Listener{
+}
+
+
+
+note right of TransitionsConfigurater::action
+可以重复调用，建议将action拆到合适的粒度的，方便复用,
+在实际组装的时候会生成一个Consumer，执行顺序按照添加顺序执行
+transactionAction同action
+end note
+
+
+Transitions o-- Event
+Transitions o-- State
+Transitions o-- TransactionAction
+TransitionsCollection o-- Transitions
+Message *-- MessageHeaders
+StateContext *-- Message
+StateMachine *--- TransitionsCollection
+StateMachine ...> StateContext
+StateMachineBuilder +-- TransitionsConfigurater:内部类
+
+@enduml
+
+@startuml
+title 状态机执行流程
+
+actor 调用者 as caller
+boundary 状态机 as sm
+control 转移容器 as coll
+control 转移 as trans
+control Guard函数 as guard
+control Action函数 as action
+
+caller -> sm: 组装请求参数
+sm -> coll : 匹配Transitions，\n主要匹配条件事件、当前状态、任务类型等
+coll --> sm
+sm -> trans: 执行
+trans -> guard: 执行Guard函数，\n主要是检查业务数据是满足执行条件，eg：时间限制
+guard --> trans: 校验当前状态是否符合执行条件
+trans -> trans: 执行Transitions
+trans -> action: 执行Action函数
+action --> trans: 返回执行结果
+trans --> sm
+sm -> caller: 返回执行结果
+
+@enduml
