@@ -3,6 +3,11 @@
     * Spring 的循环依赖主要是是指，两个类互相引用，在IOC注入时，互相创建引用。有两种依赖方式：属性注入依赖，构造方法注入依赖
     * 如何解决？
     * 对于属性注入依赖Spring通过三重缓存的机制来解决，类实例化以后在内存中的引用不会变化，剩下的只是注入一些属性,如果是构造器注入依赖则无解
+    * 如果不需要支持AOP生成代理的话，其实两冲缓存就可以支持，一重代表已经初始化好的，二重代表正在创建中的
+    * 如果需要支持生成代理，第二重就不能满足，第二重是放代理对象还是原始对象，
+      * 如果是放原始对象那么每次有引用的话都需要重新生成代理对象，导致该对象不是单例违背Spring设计原则
+      * 如果存放的是代理对象，可以解决单例问题，但是原始对象此时还没有初始化完成（正常情况下是对象初始化完成后再生成代理对象），在什么时候生成代理对象
+      * Spring 提供了第三重的缓存，用来存放对象代理生成函数，在发生循环依赖的时候调用函数直接生成代理对象，顺便放入第二重缓存中，在对象初始化完成后也需要检查是否需要代理
     ```java
 
     /** Cache of singleton objects: bean name to bean instance. */
@@ -16,7 +21,7 @@
 
     /**
     * singletonObjects          缓存已经初始化完成的bean
-    * earlySingletonObjects     缓存正在初始中，且产生循环引用的bean
+    * earlySingletonObjects     缓存正在初始中，且产生循环引用的bean,
     * singletonFactories        缓存正在初始化的org.springframework.beans.factory.ObjectFactory
     **/
     @Nullable
@@ -115,7 +120,8 @@
     ```
 
     ```plantuml
-    @startuml
+   
+      @startuml
         title: doCreateBean
         start
         :对象实例化;
